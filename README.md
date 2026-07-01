@@ -1,110 +1,132 @@
-# Cloudflare 日志分流项目
+# Cloudflare 实时日志转发
 
-## 项目背景
-本项目旨在为使用 Cloudflare 免费计划的用户提供一种方案，通过 Cloudflare Workers 将 CDN 访问日志异步发送到自建日志收集系统（loki+Grafana+fluent‑bit）。
+## 项目概述
 
-## 核心功能（MVP）
-1. **异步将 Cloudflare CDN 的访问日志** 发送到自建日志搜集系统。
-2. **非 JSON 日志自动转换** 为 JSON 格式。
-3. **敏感信息加密**，防止上传到公共仓库时泄露。
-4. **可自定义 Fluent‑Bit 地址** 并支持 **多重 Header** 配置。
-5. **支持 HTTP 与 HTTPS**。
+本项目基于 Cloudflare Workers 开发，旨在将 CDN 访问日志异步发送至自建日志收集系统（如 loki + Grafana + fluent‑bit）。
+Worker 能够：
 
-> **关键改动**：Fluent‑Bit 的默认地址已移除，**必须通过环境变量 FLUENT_BIT_URL 配置**。若未提供，系统将抛出错误并终止请求。
+- 解析非 JSON 日志（`key=value` 形式）并转换为 JSON。
+- 对所有字符串字段做 Base64（占位）加密，防止敏感信息泄露。
+- 通过 Cloudflare Workers Secrets 配置 HTTP Header（含可选 `X‑CDN‑Signature`）。
+- 通过 GitHub Actions 自动在每次推送到 `main` 分支时部署。
 
-## 配置说明
-- **Fluent‑Bit 地址**：默认为空，运行时 **必须** 在 Cloudflare Workers 环境变量 `FLUENT_BIT_URL` 或 `wrangler.toml` 的环境变量中配置合法 URL。
-- **Header**：默认仅包含 `Content-Type: application/json`。若需添加其它 Header，使用 `FLUNENT_BIT_HEADERS` 环境变量，内容为 JSON 字符串，例如：
-  ```bash
-  wrangler secret put FLUNENT_BIT_HEADERS '"{\"X-Custom-Header\":\"value\"}"'
-  ```
-- **X‑CDN‑Signature**：若需要该 Header，请在 Cloudflare Workers Secrets 中添加 `X_CDN_SIGNATURE`。
-- **敏感信息加密**：目前使用 Base64 编码占位，后续可替换为 AES 等安全加密算法。
+## 功能亮点
 
-## 开发与部署使用说明
-> **⚠️ 前提**：本项目仅在 Cloudflare Workers 环境中运行，且需要 Node.js 18+ 与 Wrangler 3+。
+| 功能              | 描述                                                                      |
+| ----------------- | ------------------------------------------------------------------------- |
+| 异步转发          | 使用 `fetch` 发送日志，推送过程不会阻塞请求。                             |
+| 自动 JSON 转换    | 解析 `key=value` 形式的日志。                                             |
+| Header 自定义     | 通过 `FLUNENT_BIT_HEADERS`（JSON 字符串）秘密配置任意 Header。            |
+| Secret‑Based 配置 | 所有关键配置均存放在 Cloudflare Workers Secrets，代码仓库不包含敏感信息。 |
+| CI/CD 友好        | GitHub Actions `deploy.yml` 仅需三条 Secret 即可完成自动部署。            |
 
-### 1. 克隆仓库
+## 环境要求
+
+- Node.js **18+**（本地开发）
+- Wrangler CLI **3+**
+- Cloudflare Workers 账户与 Worker Namespace
+- Fluent‑Bit 实例（支持 HTTPS，亦可使用 HTTP）
+
+## 本地安装 & 开发
+
 ```bash
+# 克隆仓库
 git clone https://github.com/your-username/cloudflare_realtime_log.git
 cd cloudflare_realtime_log
-```
 
-### 2. 安装依赖
-```bash
-npm install
-```
+# 安装依赖
+npm ci
 
-### 3. 配置环境变量
-| 变量 | 说明 | 如何配置 |
-|------|------|-----------|
-| `FLUENT_BIT_URL` | Fluent‑Bit 接收日志的 URL（必填） | 通过 `wrangler.toml` 或 `wrangler secret put` 设置 |
-| `FLUNENT_BIT_HEADERS` | 自定义 Header，JSON 字符串 | 通过 `wrangler secret put FLUNENT_BIT_HEADERS` 设置 |
-| `X_CDN_SIGNATURE` | 可选的 CDN 签名 Header | 通过 `wrangler secret put X_CDN_SIGNATURE` 设置 |
-
-**示例**：
-```bash
-# 1. 设置 Fluent‑Bit URL
-wrangler secret put FLUENT_BIT_URL "https://your-fluent-bit:8092"
-
-# 2. （可选）自定义 Header
-wrangler secret put FLUNENT_BIT_HEADERS '"{\"X-APP\":\"cloudflare-logs\"}"'
-
-# 3. 设置 CDN 签名（如果需要）
-wrangler secret put X_CDN_SIGNATURE '6z9z0NbGSI5jDxnaiax8Ga87r5cfK2Eox7oTojzwh5ekCxDIz65Ld5wRRP2zu0GL'
-```
-
-### 4. 本地调试
-> 通过 `wrangler dev` 启动本地模拟环境，您可以在 Workers 控制台或日志中验证功能。
-```bash
+# 本地启动（热重载）
 npm run dev
 ```
 
-**测试日志 POST**（假设日志为 key=value 形式）：
+Worker 本地地址：`http://127.0.0.1:8787`
+可直接发送日志进行测试：
+
 ```bash
-curl -X POST http://127.0.0.1:8787 -d "remote=10.0.0.1 edge=cloudflare-zhang" -H "Content-Type: text/plain"
+curl -X POST http://127.0.0.1:8787 \
+  -d "remote=10.0.0.1 edge=cloudflare-zhang" \
+  -H "Content-Type: text/plain"
 ```
 
-### 5. 生产部署
-> 请确保已在 Cloudflare Workers Dashboard 配置好 **域名路由** 与 **Secrets**。
+返回示例（已 Base64 编码）：
+
+```json
+{
+  "success": true,
+  "data": {
+    "remote": "MTExLjIuMzQ=",
+    "edge": "Y2ZsbGVmcmEuamVhbGxldA==",
+    "processedAt": "2024-08-01T12:34:56.789Z"
+  }
+}
+```
+
+## 配置
+
+在 Workers 控制台或通过 `wrangler secret put` 设置以下 Secrets：
+
+| Secret                | 作用                        | 示例                                                               |
+| --------------------- | --------------------------- | ------------------------------------------------------------------ |
+| `FLUENT_BIT_URL`      | Fluent‑Bit 接收端点（必填） | `https://your-fluent-bit:8092`                                     |
+| `FLUNENT_BIT_HEADERS` | 需要的自定义 Header（可选） | `{"X-APP":"cloudflare-logs"}`                                      |
+| `X_CDN_SIGNATURE`     | CDN 签名 Header（可选）     | `6z9z0NbGSI5jDxnaiax8Ga87r5cfK2Eox7oTojzwh5ekCxDIz65Ld5wRRP2zu0GL` |
+
+> **提示**：所有配置均存放在 Secrets，仓库中不存放任何敏感信息。
+
+## 使用方法
+
+- **部署后**：向 `https://your-domain.com/*` 发送 `POST` 请求即可。
+- **日志格式**：
+  - JSON：直接发送对象。
+  - `key=value`：任意数量键值对，用空格分隔。
+- **请求示例**：
+
 ```bash
-# 生产环境部署
+curl -X POST https://your-domain.com/* \
+  -d "remote=10.0.0.1 edge=cloudflare-zhang" \
+  -H "Content-Type: text/plain"
+```
+
+Worker 会返回包含解析后的日志、发送结果与 `success` 标记的 JSON。
+
+## 生产部署
+
+编辑 `wrangler.toml`（已包含）：
+
+```toml
+name = "cloudflare-realtime-log"
+main = "src/worker.js"
+compatibility_date = "2023-12-01"
+
+[env.production]
+name = "cloudflare-realtime-log"
+route = "your-domain.com/*"
+```
+
+使用 Wrangler 发布：
+
+```bash
 npm run deploy
 ```
-> Wrangler 会自动上传 Workers 脚本并应用您在 `wrangler.toml` 中的 `route` 配置。
 
-### 6. 验证日志转发
-- 在 Cloudflare Workers 控制台查看 Worker 日志，确认无错误。
-- 在 Fluent‑Bit、Grafana 或 Loki 中查看是否收到并解析日志。
+## CI / GitHub Actions
 
-### 7. CI/CD（可选）
-如需将该 Worker 与 GitHub Actions 集成：
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy Cloudflare Worker
-on:
-  push:
-    branches: [ main ]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-      - run: npm ci
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          secret: FLUENT_BIT_URL,FLUNENT_BIT_HEADERS,X_CDN_SIGNATURE
-```
+工作流文件位于 `.github/workflows/deploy.yml`，每次推送到 `main` 时自动部署。
+只需在 **Repository Settings → Secrets** 添加以下三条 Secret：
 
-### 8. 运行日志处理单元测试（可选）
-> 目前未提供单元测试，若需要可自行在 `tests/` 目录编写 Jest/uvu 等测试脚本。
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `FLUENT_BIT_URL,FLUNENT_BIT_HEADERS,X_CDN_SIGNATURE`
+
+## 验证
+
+1. **Worker 控制台**：检查无错误，返回 `success:true`。
+2. **Fluent‑Bit / Loki / Grafana**：确认日志已被接收并索引。
 
 ## 目录结构
+
 ```
 cloudflare-realtime-log/
 ├── src/                 # 源代码目录
@@ -119,6 +141,6 @@ cloudflare-realtime-log/
     └── PRD.md
 ```
 
----
+## 贡献
 
-如有任何问题，欢迎在 Issues 中反馈。
+欢迎提交 Issue 与 PR，所有变更请使用描述性提交信息。
