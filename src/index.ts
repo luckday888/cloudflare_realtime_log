@@ -47,7 +47,7 @@ async function sendLogToFluentBit(
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     try {
       const response = await fetch(env.FLUENTBIT_URL, {
