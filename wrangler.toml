@@ -3,6 +3,13 @@ main = "src/index.ts"
 compatibility_date = "2024-12-30"
 compatibility_flags = ["nodejs_compat"]
 
+# 关键：把 Worker 绑定到要收集日志的路由
+# pattern 匹配请求，zone_name 指定属于哪个 zone（必须是你 CF 账号里的域名）
+# routes = [
+#   { pattern = "example.com/*",        zone_name = "example.com" },
+#   { pattern = "*.example.com/*",      zone_name = "example.com" },
+# ]
+
 [vars]
 # 生产环境配置（敏感信息请使用 wrangler secret put 设置）
 # FLUENTBIT_URL = "http://your-fluentbit-server-ip:9880/cf.logs"

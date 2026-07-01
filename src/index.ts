@@ -54,7 +54,8 @@ async function sendLogToFluentBit(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Auth-Token': env.FLUENTBIT_TOKEN,
+          // Fluent-Bit 通过该请求头识别/校验来源，不经过 Nginx 鉴权
+          FLUENTBIT_TOKEN: env.FLUENTBIT_TOKEN,
         },
         body: JSON.stringify(payload),
         signal: controller.signal,

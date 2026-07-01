@@ -4,7 +4,7 @@
 export interface Env {
   /** Fluent-Bit 接收端完整的 HTTP URL 路径 */
   FLUENTBIT_URL: string;
-  /** 用于验证请求合规性的安全 Token */
+  /** Fluent-Bit 校验用的 Token，以请求头 FLUENTBIT_TOKEN 形式发送 */
   FLUENTBIT_TOKEN: string;
 }
 
