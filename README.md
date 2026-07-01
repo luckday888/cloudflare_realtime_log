@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-本项目基于 Cloudflare Workers 开发，旨在将 CDN 访问日志异步发送至自建日志收集系统（如 loki + Grafana + fluent‑bit）。
+本项目基于 Cloudflare Workers 开发，旨在将 CDN 访问日志异步发送至自建日志收集系统（如 fluent‑bit）。
 Worker 能够：
 
 - 解析非 JSON 日志（`key=value` 形式）并转换为 JSON。
