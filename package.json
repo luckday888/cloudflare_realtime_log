@@ -1,5 +1,5 @@
 {
-  "name": "cloudflare-fluentbit-logger",
+  "name": "cloudflare-realtime-log",
   "version": "1.0.0",
   "description": "Cloudflare Worker for real-time log forwarding to Fluent-Bit",
   "main": "src/index.ts",
