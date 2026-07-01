@@ -14,17 +14,18 @@ compatibility_flags = ["nodejs_compat"]
 # 生产环境配置（敏感信息请使用 wrangler secret put 设置）
 # FLUENTBIT_URL = "http://your-fluentbit-server-ip:9880/cf.logs"
 
-[observability]
-enabled = false
-head_sampling_rate = 1
-
-[observability.logs]
-enabled = true
-head_sampling_rate = 1
-persist = true
-invocation_logs = true
-
-[observability.traces]
-enabled = false
-persist = true
-head_sampling_rate = 1
+# 关闭workers的Observability日志收集，免费版每天有200K的事件量
+# [observability]
+# enabled = false
+# head_sampling_rate = 1
+#
+# [observability.logs]
+# enabled = true
+# head_sampling_rate = 1
+# persist = true
+# invocation_logs = true
+#
+# [observability.traces]
+# enabled = false
+# persist = true
+# head_sampling_rate = 1
