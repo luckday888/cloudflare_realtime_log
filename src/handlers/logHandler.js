@@ -1,3 +1,9 @@
+// 导入日志处理工具函数
+import { processLog } from '../utils/logProcessor.js';
+
+/**
+ * 发送单条日志到 Fluent-Bit
+ */
 export async function sendLogToFluentBit(logData, env) {
   // 从环境变量获取配置
   const url = env?.FLUENT_BIT_URL;
@@ -50,4 +56,40 @@ export async function sendLogToFluentBit(logData, env) {
       error: error.message,
     };
   }
+}
+
+/**
+ * 批量处理日志
+ */
+export async function handleLogBatch(logBatch, env) {
+  const results = [];
+
+  for (const logLine of logBatch) {
+    try {
+      // 处理单条日志
+      const logData = processLog(logLine);
+      if (logData) {
+        const result = await sendLogToFluentBit(logData, env);
+        results.push({
+          success: true,
+          log: logLine,
+          ...result
+        });
+      } else {
+        results.push({
+          success: false,
+          log: logLine,
+          error: 'Invalid log format'
+        });
+      }
+    } catch (error) {
+      results.push({
+        success: false,
+        log: logLine,
+        error: error.message
+      });
+    }
+  }
+
+  return results;
 }
