@@ -1,13 +1,16 @@
 export async function sendLogToFluentBit(logData, env) {
-  const { FLUENT_BIT_URL, FLUENT_BIT_HEADERS } = await import('../config/constants.js');
-  const url = env?.FLUENT_BIT_URL ?? FLUENT_BIT_URL;
+  // 从环境变量获取配置
+  const url = env?.FLUENT_BIT_URL;
 
   // 关键：默认地址为空，必须在运行时提供
   if (!url) {
     throw new Error('Fluent-Bit URL not configured. Please set FLUENT_BIT_URL in the environment.');
   }
 
-  let headers = { ...FLUENT_BIT_HEADERS };
+  // 默认 header，Content-Type 必须为 application/json，其他 header 可以通过 env.FLUNENT_BIT_HEADERS（JSON 字符串）进行覆盖
+  let headers = {
+    'Content-Type': 'application/json',
+  };
 
   // 如果 env 中提供了 FLUNENT_BIT_HEADERS（JSON 字符串），合并到 headers
   if (env?.FLUNENT_BIT_HEADERS) {
