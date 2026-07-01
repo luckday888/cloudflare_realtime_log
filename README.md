@@ -1,120 +1,128 @@
-# Cloudflare 实时日志收集系统
+# Cloudflare Fluent-Bit Logger
 
-## 项目说明
+基于 Cloudflare Workers 的实时日志转发代理，用于在 Cloudflare 免费版限制下收集网站访问日志，并通过 HTTP 协议异步推送到自建的 Fluent-Bit 接收端。
 
-这是一个基于 Cloudflare Workers 的系统，用于从 Cloudflare 获取实时访问日志并转发到您的日志收集系统。该系统针对 Cloudflare Workers 免费版进行了优化，不依赖 Logpush 功能。
+## 架构
+
+```text
+[用户客户端] ────(HTTP/HTTPS)────> [Cloudflare Worker] ────(普通请求)────> [源站服务器]
+                                         │ (获取响应后)
+                                         ├─ 返回响应给客户端
+                                         │ (异步 waitUntil)
+                                         └─(HTTP POST + Token)───> [自建 Fluent-Bit] (in_http 插件)
+```
+
+## 功能特性
+
+- **透明代理**：保留原始请求方法、路径与 Header，将请求转发至源站。
+- **元数据提取**：收集客户端 IP、地理位置、TLS 版本、User-Agent、响应状态码、响应耗时等。
+- **异步非阻塞**：使用 `ctx.waitUntil` 在响应返回后后台发送日志，不增加页面加载延迟。
+- **安全验证**：通过 `X-Auth-Token` 头部保护 Fluent-Bit HTTP 接口。
+- **容灾设计**：Fluent-Bit 端异常时静默失败，不影响源站访问。
+- **轻量级**：代码保持轻量，适配 Cloudflare 免费版 10ms CPU 限制。
 
 ## 项目结构
 
 ```
 cloudflare-realtime-log/
 ├── src/
-│   ├── worker.js          # Cloudflare Worker 主入口
-│   ├── handlers/
-│   │   └── logHandler.js  # 日志处理逻辑
-│   └── utils/
-│       └── logProcessor.js # 日志解析和处理工具
-├── wrangler.toml          # Cloudflare Workers 配置
-└── package.json           # 项目依赖
+│   ├── index.ts    # Worker 主入口
+│   └── types.ts    # TypeScript 类型定义
+├── test/
+│   └── index.test.ts   # Vitest 单元测试
+├── fluent-bit.conf     # Fluent-Bit 接收端配置样例
+├── wrangler.toml       # Wrangler 配置文件
+├── package.json
+├── tsconfig.json
+└── README.md
 ```
 
-## 功能说明
+## 前置要求
 
-1. **日志接收**：通过代理转发请求，同时收集访问日志
-2. **日志处理**：解析、格式化日志数据
-3. **日志转发**：将处理后的日志发送到您的 Fluent-Bit 服务器
-4. **实时性**：通过 Cloudflare Workers 实现低延迟日志处理
+- Node.js >= 18
+- npm 或 pnpm
+- Cloudflare 账号与 Wrangler CLI
 
-## 针对免费版的优化
-
-由于 Cloudflare 免费版不支持 Logpush 功能，本系统通过以下方式实现日志收集：
-- 通过代理转发请求的方式收集访问日志
-- 在每个请求中收集完整的访问信息
-- 使用 `ctx.waitUntil` 实现异步日志发送，不影响用户访问
-
-## 配置说明
-
-### 环境变量（在 Cloudflare Workers 控制台设置）：
-
-- `FLUENT_BIT_URL`：Fluent-Bit 接收端点（必填）
-- `FLUENT_BIT_TOKEN`：认证 Token（必填，用于安全验证）
-- `X_CDN_SIGNATURE`：CDN 签名 Header（可选）
-
-## 部署方法
-
-### 1. 安装依赖
+## 安装依赖
 
 ```bash
 npm install
 ```
 
-### 2. 配置 Cloudflare Workers
+## 配置
 
-首先需要安装 wrangler CLI（如果还没有安装）：
+### 1. 本地环境变量（开发测试用）
 
-```bash
-npm install -g wrangler
+在项目根目录创建 `.dev.vars`：
+
+```
+FLUENTBIT_URL=http://your-fluentbit-server-ip:9880/cf.logs
+FLUENTBIT_TOKEN=your-secure-shared-token
 ```
 
-然后登录到 Cloudflare：
+### 2. 生产环境变量
+
+推荐使用 Wrangler Secret 设置敏感信息：
 
 ```bash
-wrangler login
+wrangler secret put FLUENTBIT_URL
+wrangler secret put FLUENTBIT_TOKEN
 ```
 
-### 3. 部署到 Cloudflare
+## 本地开发
+
+```bash
+npm run dev
+```
+
+## 运行测试
+
+```bash
+npm run test
+```
+
+## 类型检查
+
+```bash
+npm run typecheck
+```
+
+## 部署
 
 ```bash
 npm run deploy
 ```
 
-或者使用：
+## Fluent-Bit 接收端配置
+
+参考项目根目录下的 `fluent-bit.conf`。启动命令示例：
 
 ```bash
-wrangler deploy
+fluent-bit -c fluent-bit.conf
 ```
 
-### 4. 设置环境变量
+> 注意：`in_http` 插件本身不直接支持按 Header 鉴权，建议在生产环境通过 Nginx/Caddy 等反向代理校验 `X-Auth-Token` 后再转发到 Fluent-Bit。
 
-在 Cloudflare Workers 控制台中设置以下环境变量：
-- `FLUENT_BIT_URL`：Fluent-Bit 接收端点
-- `FLUENT_BIT_TOKEN`：认证 Token
+## 日志字段说明
 
-## 使用方法
+| 字段        | 说明                                  |
+| ----------- | ------------------------------------- |
+| timestamp   | ISO 8601 格式 UTC 时间戳              |
+| ip          | 客户端真实 IP (CF-Connecting-IP)      |
+| country     | 国家/地区代码 (request.cf.country)      |
+| city        | 城市 (request.cf.city)                |
+| colo        | Cloudflare 边缘数据中心 (request.cf.colo) |
+| method      | HTTP 请求方法                          |
+| url         | 完整请求 URL                           |
+| userAgent   | User-Agent 字符串                      |
+| referer     | Referer 来源页面                       |
+| status      | 源站返回的 HTTP 状态码                 |
+| duration_ms | 源站请求耗时（毫秒）                    |
+| protocol    | HTTP 协议版本                          |
+| tls_version | TLS 版本                               |
 
-### 1. 配置 Cloudflare Worker 代理
+## 注意事项
 
-由于免费版不支持 Logpush，您需要：
-1. 将您的域名指向此 Cloudflare Worker
-2. 所有请求都将通过此 Worker 进行代理和日志收集
-
-### 2. 验证部署
-
-您可以使用以下命令测试部署是否成功：
-
-```bash
-curl -X POST https://your-worker-url.com/ \
-  -d "test=1" \
-  -H "Content-Type: text/plain"
-```
-
-### 3. 监控和调试
-
-- 查看 Cloudflare Workers 控制台中的日志输出
-- 检查 Fluent-Bit 服务器是否收到日志
-- 使用 `wrangler tail` 实时查看日志输出
-
-## 重要说明
-
-由于 Cloudflare 免费版不支持 Logpush 功能，本系统采用代理方式收集日志：
-- 所有请求必须通过此 Worker 进行代理
-- 仅在请求经过此 Worker 时才能收集日志
-- 不支持直接从 Cloudflare 推送日志
-
-## 技术特性
-
-- **轻量级处理**：符合 Cloudflare 免费版 10ms CPU 限制
-- **非阻塞设计**：使用 `ctx.waitUntil` 异步发送日志，不影响用户访问
-- **容错机制**：Fluent-Bit 服务不可用时不会影响主请求流程
-- **安全验证**：通过 Token 验证确保日志发送安全
-- **数据完整性**：收集完整的访问日志信息包括 IP、地理位置、响应时间等
+- Cloudflare 免费版每次请求 CPU 时间上限为 10ms，请避免在 Worker 中执行复杂计算。
+- 发送日志的超时时间设置为 2500ms，超时后自动取消请求。
+- 所有日志发送异常均被捕获并静默处理，不会影响源站响应。

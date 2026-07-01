@@ -15,6 +15,7 @@ pids
 # Dependency directories
 node_modules/
 jspm_packages/
+package-lock.json
 
 # TypeScript cache
 *.tsbuildinfo
@@ -51,3 +52,4 @@ Thumbs.db
 #此项目内容
 specs/
 .claude/
+fluent-bit.conf

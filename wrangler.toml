@@ -1,8 +1,8 @@
-name = "cloudflare-realtime-log"
-main = "src/worker.js"
-compatibility_date = "2026-07-01"
+name = "cloudflare-fluentbit-logger"
+main = "src/index.ts"
+compatibility_date = "2024-12-30"
+compatibility_flags = ["nodejs_compat"]
 
 [vars]
-# Production configuration (use wrangler secret put to set sensitive values)
-# FLUENT_BIT_URL = "http://your-fluentbit-server-ip:9880/cf.logs"
-# FLUENT_BIT_TOKEN = "your-secure-shared-token"
+# 生产环境配置（敏感信息请使用 wrangler secret put 设置）
+# FLUENTBIT_URL = "http://your-fluentbit-server-ip:9880/cf.logs"
