@@ -1,95 +1,159 @@
-// 导入日志处理工具函数
-import { processLog } from '../utils/logProcessor.js';
+/**
+ * Log handling functions for Cloudflare Worker
+ */
 
 /**
- * 发送单条日志到 Fluent-Bit
+ * Handles the logging process
+ * @param {Object} params - Parameters for log handling
+ * @param {Object} params.request - Incoming request
+ * @param {Object} params.response - Response from origin server
+ * @param {number} params.duration - Request duration in milliseconds
+ * @param {Object} params.env - Environment variables
+ * @param {Object} params.ctx - Context object
+ * @returns {Promise<void>}
  */
-export async function sendLogToFluentBit(logData, env) {
-  // 从环境变量获取配置
-  const url = env?.FLUENT_BIT_URL;
-
-  // 关键：默认地址为空，必须在运行时提供
-  if (!url) {
-    throw new Error('Fluent-Bit URL not configured. Please set FLUENT_BIT_URL in the environment.');
-  }
-
-  // 默认 header，Content-Type 必须为 application/json，其他 header 可以通过 env.FLUNENT_BIT_HEADERS（JSON 字符串）进行覆盖
-  let headers = {
-    'Content-Type': 'application/json',
-  };
-
-  // 如果 env 中提供了 FLUNENT_BIT_HEADERS（JSON 字符串），合并到 headers
-  if (env?.FLUNENT_BIT_HEADERS) {
-    try {
-      const custom = JSON.parse(env.FLUNENT_BIT_HEADERS);
-      headers = { ...headers, ...custom };
-    } catch (e) {
-      console.error('解析自定义 headers 失败:', e);
-    }
-  }
-
-  // 如果提供了 X_CDN_SIGNATURE，加入 header
-  if (env?.X_CDN_SIGNATURE) {
-    headers['X-CDN-Signature'] = env.X_CDN_SIGNATURE;
-  }
+export async function handleLog(params) {
+  const { request, response, duration, env, ctx } = params;
 
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(logData),
-    });
+    // Extract log data
+    const logData = extractLogData(request, response, duration);
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
+    // Validate and sanitize
+    const sanitizedData = validateAndSanitizeLogData(logData);
 
-    const result = await response.json();
-    return {
-      success: true,
-      data: result,
-    };
+    // Format for Fluent-Bit
+    const formattedData = formatForFluentBit(sanitizedData);
+
+    // Send to Fluent-Bit asynchronously
+    ctx.waitUntil(sendLogToFluentBit(formattedData, env));
   } catch (error) {
-    console.error('发送日志到fluent-bit失败:', error);
-    return {
-      success: false,
-      error: error.message,
-    };
+    console.warn('Error in log handling:', error.message);
   }
 }
 
 /**
- * 批量处理日志
+ * Extracts log data from request and response
+ * @param {Request} request - Incoming request
+ * @param {Response} response - Response from origin server
+ * @param {number} duration - Duration of request in milliseconds
+ * @returns {Object} Formatted log payload
  */
-export async function handleLogBatch(logBatch, env) {
-  const results = [];
+function extractLogData(request, response, duration) {
+  // Extract client IP from CF-Connecting-IP header
+  const ip = request.headers.get('CF-Connecting-IP') || '';
 
-  for (const logLine of logBatch) {
-    try {
-      // 处理单条日志
-      const logData = processLog(logLine);
-      if (logData) {
-        const result = await sendLogToFluentBit(logData, env);
-        results.push({
-          success: true,
-          log: logLine,
-          ...result
-        });
-      } else {
-        results.push({
-          success: false,
-          log: logLine,
-          error: 'Invalid log format'
-        });
-      }
-    } catch (error) {
-      results.push({
-        success: false,
-        log: logLine,
-        error: error.message
-      });
+  // Extract Cloudflare metadata (if available)
+  const cf = request.cf || {};
+
+  // Extract User-Agent and Referer
+  const userAgent = request.headers.get('User-Agent') || '';
+  const referer = request.headers.get('Referer') || '';
+
+  return {
+    timestamp: new Date().toISOString(),
+    ip,
+    country: cf.country || '',
+    city: cf.city || '',
+    colo: cf.colo || '',
+    method: request.method,
+    url: request.url,
+    userAgent,
+    referer,
+    status: response.status,
+    duration_ms: duration,
+    protocol: request.headers.get('HTTP-Version') || request.headers.get('Protocol') || '',
+    tls_version: cf.tlsVersion || ''
+  };
+}
+
+/**
+ * Sends log data to Fluent-Bit
+ * @param {Object} payload - Log data to send
+ * @param {Object} env - Environment variables
+ * @returns {Promise<void>}
+ */
+async function sendLogToFluentBit(payload, env) {
+  try {
+    // Validate environment variables
+    if (!env.FLUENT_BIT_URL || !env.FLUENT_BIT_TOKEN) {
+      console.warn('Fluent-Bit URL or Token not configured');
+      return;
     }
+
+    // Set up timeout for the request to Fluent-Bit
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5s timeout
+
+    const response = await fetch(env.FLUENT_BIT_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': env.FLUENT_BIT_TOKEN,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    // Log success or failure (but don't throw)
+    if (!response.ok) {
+      console.warn(`Failed to send log to Fluent-Bit: ${response.status} ${response.statusText}`);
+    }
+  } catch (error) {
+    // Silent fail - don't throw to avoid affecting main request flow
+    console.warn('Error sending log to Fluent-Bit:', error.message);
+  }
+}
+
+/**
+ * Validates and sanitizes log data
+ * @param {Object} logData - Raw log data to validate
+ * @returns {Object} Validated and sanitized log data
+ */
+function validateAndSanitizeLogData(logData) {
+  // Ensure all required fields are present
+  const sanitized = {
+    timestamp: logData.timestamp || new Date().toISOString(),
+    ip: logData.ip || '',
+    country: logData.country || '',
+    city: logData.city || '',
+    colo: logData.colo || '',
+    method: logData.method || 'GET',
+    url: logData.url || '',
+    userAgent: logData.userAgent || '',
+    referer: logData.referer || '',
+    status: logData.status || 0,
+    duration_ms: logData.duration_ms || 0,
+    protocol: logData.protocol || '',
+    tls_version: logData.tls_version || ''
+  };
+
+  // Sanitize URL to prevent injection
+  try {
+    if (sanitized.url) {
+      const url = new URL(sanitized.url);
+      sanitized.url = url.href;
+    }
+  } catch (error) {
+    // If URL is invalid, keep the original (but log the error)
+    console.warn('Invalid URL in log data:', sanitized.url);
   }
 
-  return results;
+  return sanitized;
+}
+
+/**
+ * Formats log data for Fluent-Bit
+ * @param {Object} logData - Raw log data
+ * @returns {Object} Formatted log data for Fluent-Bit
+ */
+function formatForFluentBit(logData) {
+  // Apply any specific formatting needed for Fluent-Bit
+  return {
+    ...logData,
+    // Ensure timestamp is in correct ISO format
+    timestamp: new Date(logData.timestamp).toISOString()
+  };
 }

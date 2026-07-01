@@ -1,8 +1,8 @@
 name = "cloudflare-realtime-log"
 main = "src/worker.js"
-compatibility_date = "2023-12-01"
+compatibility_date = "2026-07-01"
 
-# 配置环境
-[env.production]
-name = "cloudflare-realtime-log"
-route = "your-domain.com/*"
+[vars]
+# Production configuration (use wrangler secret put to set sensitive values)
+# FLUENT_BIT_URL = "http://your-fluentbit-server-ip:9880/cf.logs"
+# FLUENT_BIT_TOKEN = "your-secure-shared-token"
